@@ -2,4 +2,8 @@
 
 My Embedded Rust Playground with ESP32-S2
 
-For each experiment playground, I will put it into one branch.
+Experiment Blinky LED and Button
+
+Resource that I used:
+https://github.com/esp-rs/esp-idf-hal/blob/master/examples/blinky.rs
+https://github.com/esp-rs/esp-idf-hal/blob/master/examples/button.rs
