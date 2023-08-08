@@ -1,6 +1,6 @@
 use anyhow::{Result};
 use log::info;
-use esp_idf_hal::{prelude::Peripherals, delay::Delay};
+use esp_idf_hal::{prelude::Peripherals, gpio::*, delay::{Ets, Delay}};
 use esp_idf_svc::{
     wifi::EspWifi,
     nvs::EspDefaultNvsPartition,
@@ -11,8 +11,14 @@ use embedded_svc::{
     wifi::{ClientConfiguration, Configuration},
     http::Method,
 };
+use std::{
+    sync::{Arc, Mutex},
+    thread::sleep,
+    time::Duration,
+};
 // If using the `binstart` feature of `esp-idf-sys`, always keep this module imported
 use esp_idf_sys as _;
+use dht11::Dht11;
 
 /// This configuration is picked up at compile time by `build.rs` from the
 /// file `cfg.toml`.
@@ -55,6 +61,10 @@ fn main() -> Result<()> {
         Delay::delay_ms(1000);
     }
 
+    // Configure the GPIO pin
+    let dht11_pin = PinDriver::input_output_od(peripherals.pins.gpio4).expect("Failed to initialize GPIO");
+    let dht11 = Arc::new(Mutex::new(Dht11::new(dht11_pin)));
+
     //Set the HTTP server
     let mut server = EspHttpServer::new(&ServerConfiguration::default())?;
 
@@ -65,9 +75,32 @@ fn main() -> Result<()> {
         Ok(())
     })?;
 
+    server.fn_handler("/temperature", Method::Get, move |request| {
+        //Wait for the sensor to be ready
+        println!("Waiting for sensor to be ready...");
+        Delay::delay_ms(1000);
+
+        let mut dht11_delay = Ets;
+        
+        match dht11.try_lock().unwrap().perform_measurement(&mut dht11_delay) {
+            Ok(measurement) => {
+                let html = temperature(measurement.temperature as f32 / 10.0, measurement.humidity as f32 / 10.0);
+                let mut response = request.into_ok_response()?;
+                response.write(html.as_bytes())?;
+            },
+            Err(_) => {
+                let html = log_html("Failed to read sensor");
+                let mut response = request.into_ok_response()?;
+                response.write(html.as_bytes())?;
+            },
+        }
+
+        Ok(())
+    })?;
+
     loop {
         println!("IP info {:?}", wifi_driver.sta_netif().get_ip_info()?);
-        std::thread::sleep(std::time::Duration::from_secs(10));
+        sleep(Duration::from_millis(10000));
     }
 }
 
@@ -92,4 +125,12 @@ fn templated(content: impl AsRef<str>) -> String {
 
 fn index_html() -> String {
     templated("Hello from ESP32-S2!")
+}
+
+fn temperature(temp: f32, humid: f32) -> String {
+    templated(format!("Chip temperature: {:.2}°C, Humidity: {:.2}%", temp, humid))
+}
+
+fn log_html(content: &str) -> String {
+    templated(content)
 }
